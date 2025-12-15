@@ -1,0 +1,494 @@
+{
+  "name": "AI Travel Planner - Price Optimizer",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "travel-planner",
+        "responseMode": "responseNode",
+        "responseData": "firstEntry",
+        "options": {}
+      },
+      "id": "streamlit-webhook",
+      "name": "📱 Streamlit Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "travel-planner-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Procesar datos de viaje del usuario\nconst travelData = $input.first().json;\n\n// Validar datos requeridos\nconst requiredFields = ['origin', 'destination', 'departure_date', 'return_date', 'travelers'];\nconst missingFields = requiredFields.filter(field => !travelData[field]);\n\nif (missingFields.length > 0) {\n  throw new Error(`Campos requeridos faltantes: ${missingFields.join(', ')}`);\n}\n\n// Calcular duración del viaje\nconst departure = new Date(travelData.departure_date);\nconst returnDate = new Date(travelData.return_date);\nconst tripDuration = Math.ceil((returnDate - departure) / (1000 * 60 * 60 * 24));\n\n// Determinar temporada y precios esperados\nconst month = departure.getMonth();\nlet season = 'low';\nlet priceMultiplier = 1.0;\n\nif ([5, 6, 7, 11, 12].includes(month)) { // Junio, Julio, Agosto, Noviembre, Diciembre\n  season = 'high';\n  priceMultiplier = 1.4;\n} else if ([3, 4, 8, 9].includes(month)) { // Abril, Mayo, Septiembre, Octubre\n  season = 'medium';\n  priceMultiplier = 1.2;\n}\n\n// Generar ID único de búsqueda\nconst searchId = `travel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\nreturn [{\n  // Datos originales del usuario\n  ...travelData,\n  \n  // Métricas calculadas\n  trip_duration: tripDuration,\n  season: season,\n  price_multiplier: priceMultiplier,\n  \n  // Metadata\n  search_id: searchId,\n  processed_at: new Date().toISOString(),\n  user_id: travelData.user_id || `user_${Math.random().toString(36).substr(2, 9)}`,\n  \n  // Configuración de APIs\n  currency: travelData.currency || 'USD',\n  locale: travelData.locale || 'en-US',\n  \n  // Rangos de fechas para búsqueda flexible\n  flexible_dates: {\n    departure_min: new Date(departure.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    departure_max: new Date(departure.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    return_min: new Date(returnDate.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    return_max: new Date(returnDate.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "process-travel-data",
+      "name": "⚙️ Process Travel Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://skyscanner-api.p.rapidapi.com/v3/flights/live/search/create",
+        "authentication": "predefinedCredentialType",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "origin",
+              "value": "={{ $json.origin }}"
+            },
+            {
+              "name": "destination",
+              "value": "={{ $json.destination }}"
+            },
+            {
+              "name": "departure_date",
+              "value": "={{ $json.departure_date }}"
+            },
+            {
+              "name": "return_date",
+              "value": "={{ $json.return_date }}"
+            },
+            {
+              "name": "adults",
+              "value": "={{ $json.travelers }}"
+            },
+            {
+              "name": "currency",
+              "value": "={{ $json.currency }}"
+            },
+            {
+              "name": "locale",
+              "value": "={{ $json.locale }}"
+            },
+            {
+              "name": "market",
+              "value": "US"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-RapidAPI-Key",
+              "value": "={{ $env.SKYSCANNER_API_KEY }}"
+            },
+            {
+              "name": "X-RapidAPI-Host",
+              "value": "skyscanner-api.p.rapidapi.com"
+            }
+          ]
+        },
+        "timeout": 60000
+      },
+      "id": "skyscanner-flights",
+      "name": "✈️ Skyscanner Flights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "skyscanner-credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://booking-com.p.rapidapi.com/v1/hotels/search",
+        "authentication": "predefinedCredentialType",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "checkin_date",
+              "value": "={{ $json.departure_date }}"
+            },
+            {
+              "name": "checkout_date",
+              "value": "={{ $json.return_date }}"
+            },
+            {
+              "name": "adults_number",
+              "value": "={{ $json.travelers }}"
+            },
+            {
+              "name": "dest_id",
+              "value": "={{ $json.destination }}"
+            },
+            {
+              "name": "dest_type",
+              "value": "city"
+            },
+            {
+              "name": "order_by",
+              "value": "price"
+            },
+            {
+              "name": "units",
+              "value": "metric"
+            },
+            {
+              "name": "locale",
+              "value": "={{ $json.locale }}"
+            },
+            {
+              "name": "currency",
+              "value": "={{ $json.currency }}"
+            },
+            {
+              "name": "room_number",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-RapidAPI-Key",
+              "value": "={{ $env.BOOKING_API_KEY }}"
+            },
+            {
+              "name": "X-RapidAPI-Host",
+              "value": "booking-com.p.rapidapi.com"
+            }
+          ]
+        },
+        "timeout": 60000
+      },
+      "id": "booking-hotels",
+      "name": "🏨 Booking.com Hotels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "booking-credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8002/optimize-travel",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "flight_data",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "hotel_data",
+              "value": "={{ $node['Booking.com Hotels'].json }}"
+            },
+            {
+              "name": "user_preferences",
+              "value": "={{ $node['Process Travel Data'].json }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ai-travel-optimizer",
+      "name": "🤖 AI Travel Optimizer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Procesar resultados de IA y generar recomendaciones\nconst aiRecommendation = $input.first().json;\nconst flightData = $node['Skyscanner Flights'].json;\nconst hotelData = $node['Booking.com Hotels'].json;\nconst userData = $node['Process Travel Data'].json;\n\n// Extraer mejores ofertas\nconst bestFlight = aiRecommendation.best_flight || {};\nconst bestHotel = aiRecommendation.best_hotel || {};\nconst alternativeOptions = aiRecommendation.alternatives || [];\n\n// Construir enlaces de afiliado\nconst flightAffiliateLink = `https://www.skyscanner.net/transport/flights/${userData.origin}/${userData.destination}/${userData.departure_date}/${userData.return_date}/?adults=${userData.travelers}&affiliate=${$env.SKYSCANNER_AFFILIATE_ID}`;\n\nconst hotelAffiliateLink = `https://www.booking.com/searchresults.html?checkin=${userData.departure_date}&checkout=${userData.return_date}&selected_currency=${userData.currency}&ss=${bestHotel.hotel_name || userData.destination}&affiliate=${$env.BOOKING_AFFILIATE_ID}`;\n\n// Calcular ahorros y métricas\nconst totalCost = (bestFlight.price || 0) + (bestHotel.price || 0);\nconst averageCost = aiRecommendation.market_average || totalCost * 1.2;\nconst savings = averageCost - totalCost;\nconst savingsPercentage = ((savings / averageCost) * 100).toFixed(1);\n\n// Generar itinerario\nconst itinerary = {\n  day_by_day: generateItinerary(userData, bestHotel, aiRecommendation.recommended_activities),\n  total_cost: totalCost,\n  cost_breakdown: {\n    flights: bestFlight.price,\n    hotel: bestHotel.price,\n    activities: aiRecommendation.estimated_activities_cost || 50,\n    food: aiRecommendation.estimated_food_cost || 100\n  }\n};\n\n// Generar alertas de precio\nconst priceAlerts = [];\nif (savingsPercentage > 15) {\n  priceAlerts.push({\n    type: 'great_deal',\n    message: `¡Oferta excepcional! Estás ahorrando ${savingsPercentage}%`,\n    priority: 'high'\n  });\n}\n\nif (userData.budget && totalCost > userData.budget) {\n  priceAlerts.push({\n    type: 'over_budget',\n    message: `El viaje excede tu presupuesto por $${totalCost - userData.budget}`,\n    priority: 'medium'\n  });\n}\n\nreturn [{\n  // Datos del usuario\n  ...userData,\n  \n  // Mejores ofertas\n  best_flight: {\n    ...bestFlight,\n    affiliate_link: flightAffiliateLink\n  },\n  best_hotel: {\n    ...bestHotel,\n    affiliate_link: hotelAffiliateLink\n  },\n  \n  // Alternativas\n  alternative_options: alternativeOptions,\n  \n  // Análisis financiero\n  total_cost: totalCost,\n  market_average: averageCost,\n  total_savings: savings,\n  savings_percentage: savingsPercentage,\n  \n  // Itinerario\n  itinerary: itinerary,\n  \n  // Alertas\n  price_alerts: priceAlerts,\n  \n  // Recomendaciones de IA\n  ai_recommendations: aiRecommendation.recommendations || [],\n  confidence_score: aiRecommendation.confidence_score || 0.8,\n  \n  // Timestamps\n  search_completed_at: new Date().toISOString(),\n  price_valid_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()\n}];\n\n// Funciones auxiliares\nfunction generateItinerary(userData, hotel, activities) {\n  const itinerary = [];\n  const duration = userData.trip_duration;\n  \n  for (let i = 0; i < duration; i++) {\n    const day = {\n      day: i + 1,\n      date: new Date(new Date(userData.departure_date).getTime() + i * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n      activities: []\n    };\n    \n    // Día 1: Llegada\n    if (i === 0) {\n      day.activities = [\n        'Llegada al aeropuerto',\n        'Check-in en el hotel',\n        'Exploración del área local',\n        'Cena de bienvenida'\n      ];\n    }\n    // Día último: Salida\n    else if (i === duration - 1) {\n      day.activities = [\n        'Desayuno de despedida',\n        'Check-out del hotel',\n        'Últimas compras de recuerdos',\n        'Traslado al aeropuerto'\n      ];\n    }\n    // Días intermedios\n    else {\n      const availableActivities = activities || ['Tour cultural', 'Gastronomía local', 'Naturaleza', 'Compras'];\n      day.activities = [\n        'Desayuno en el hotel',\n        availableActivities[i % availableActivities.length],\n        'Tiempo libre',\n        'Cena en restaurante local'\n      ];\n    }\n    \n    itinerary.push(day);\n  }\n  \n  return itinerary;\n}"
+      },
+      "id": "generate-travel-recommendations",
+      "name": "💡 Generate Travel Recommendations",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "travel_searches",
+        "data": {
+          "search_id": "={{ $json.search_id }}",
+          "user_id": "={{ $json.user_id }}",
+          "origin": "={{ $json.origin }}",
+          "destination": "={{ $json.destination }}",
+          "departure_date": "={{ $json.departure_date }}",
+          "return_date": "={{ $json.return_date }}",
+          "travelers": "={{ $json.travelers }}",
+          "best_flight": "={{ $json.best_flight }}",
+          "best_hotel": "={{ $json.best_hotel }}",
+          "total_cost": "={{ $json.total_cost }}",
+          "total_savings": "={{ $json.total_savings }}",
+          "savings_percentage": "={{ $json.savings_percentage }}",
+          "itinerary": "={{ $json.itinerary }}",
+          "price_alerts": "={{ $json.price_alerts }}",
+          "ai_recommendations": "={{ $json.ai_recommendations }}",
+          "confidence_score": "={{ $json.confidence_score }}",
+          "search_completed_at": "={{ $json.search_completed_at }}",
+          "price_valid_until": "={{ $json.price_valid_until }}"
+        },
+        "additionalFields": {},
+        "returnFields": ["id", "search_id", "total_cost", "savings_percentage"]
+      },
+      "id": "supabase-storage",
+      "name": "💾 Supabase Storage",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "message": "✅ **¡Plan de Viaje Optimizado Encontrado!** ✈️🏨\n\n**Destino:** {{ $json.destination }}\n**Duración:** {{ $json.trip_duration }} días\n**Viajeros:** {{ $json.travelers }}\n\n**💸 Mejores Precios:**\n• ✈️ Vuelo: ${{ $json.best_flight.price }}\n• 🏨 Hotel: ${{ $json.best_hotel.price }}\n• 💰 **Total: ${{ $json.total_cost }}**\n\n**🎯 Ahorros:**\n• Estás ahorrando **${{ $json.total_savings }}** ({{ $json.savings_percentage }}%)\n• Precio promedio del mercado: ${{ $json.market_average }}\n\n**🔗 Enlaces Directos:**\n• [Reservar Vuelo]({{ $json.best_flight.affiliate_link }})\n• [Reservar Hotel]({{ $json.best_hotel.affiliate_link }})\n\n**📅 Itinerario:** {{ $json.trip_duration }} días de aventura\n**Confianza IA:** {{ ($json.confidence_score * 100).toFixed(0) }}%",
+        "otherOptions": {}
+      },
+      "id": "success-response",
+      "name": "✅ Success Response",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true
+          },
+          "conditions": [
+            {
+              "id": "great-deal-check",
+              "leftValue": "={{ $json.savings_percentage }}",
+              "rightValue": "20",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-great-deal",
+      "name": "🎯 Check Great Deal",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "url": "https://api.sendgrid.com/v3/mail/send",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SENDGRID_API_KEY }}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "personalizations",
+              "value": "=[{\"to\": [{\"email\": \"{{ $json.email }}\"}], \"subject\": \"🎉 ¡Oferta de Viaje Excepcional Encontrada!\"}]"
+            },
+            {
+              "name": "from",
+              "value": "={\"email\": \"travel@aiplanner.com\", \"name\": \"AI Travel Planner\"}"
+            },
+            {
+              "name": "content",
+              "value": "=[{\"type\": \"text/html\", \"value\": \"<h2>¡Encontraste una oferta increíble!</h2><p>Estás ahorrando <strong>{{ $json.savings_percentage }}%</strong> en tu viaje a {{ $json.destination }}!</p><p><a href='{{ $json.best_flight.affiliate_link }}'>Reservar Vuelo</a> | <a href='{{ $json.best_hotel.affiliate_link }}'>Reservar Hotel</a></p>\"}]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-email-alert",
+      "name": "📧 Send Email Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sendgrid-credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $json.phone_number }}"
+            },
+            {
+              "name": "From",
+              "value": "={{ $env.TWILIO_PHONE_NUMBER }}"
+            },
+            {
+              "name": "Body",
+              "value": "✈️¡Oferta de viaje! Viaja a {{ $json.destination }} por solo ${{ $json.total_cost }}. Ahorras ${{ $json.total_savings }} ({{ $json.savings_percentage }}%). Válido por 24h. 🔗 Enlaces en tu email."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-sms-alert",
+      "name": "💬 Send SMS Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "twilio-credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "📱 Streamlit Webhook": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Process Travel Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Process Travel Data": {
+      "main": [
+        [
+          {
+            "node": "✈️ Skyscanner Flights",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🏨 Booking.com Hotels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✈️ Skyscanner Flights": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI Travel Optimizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🏨 Booking.com Hotels": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI Travel Optimizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI Travel Optimizer": {
+      "main": [
+        [
+          {
+            "node": "💡 Generate Travel Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💡 Generate Travel Recommendations": {
+      "main": [
+        [
+          {
+            "node": "💾 Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "✅ Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🎯 Check Great Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Check Great Deal": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "💬 Send SMS Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

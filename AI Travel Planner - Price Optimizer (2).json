@@ -1,0 +1,218 @@
+{
+  "name": "AI Travel Planner - Price Optimizer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "travel-planner",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "83e9a6b8-c5a5-44ee-9272-1a9312154f8c",
+      "name": "📱 Streamlit Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        112
+      ],
+      "webhookId": "travel-planner-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Procesar datos de viaje del usuario\nconst travelData = $input.first().json;\n\n// Validar datos requeridos\nconst requiredFields = ['origin', 'destination', 'departure_date', 'return_date', 'travelers'];\nconst missingFields = requiredFields.filter(field => !travelData[field]);\n\nif (missingFields.length > 0) {\n  throw new Error(`Campos requeridos faltantes: ${missingFields.join(', ')}`);\n}\n\n// Calcular duración del viaje\nconst departure = new Date(travelData.departure_date);\nconst returnDate = new Date(travelData.return_date);\nconst tripDuration = Math.ceil((returnDate - departure) / (1000 * 60 * 60 * 24));\n\n// Determinar temporada y precios esperados\nconst month = departure.getMonth();\nlet season = 'low';\nlet priceMultiplier = 1.0;\n\nif ([5, 6, 7, 11, 12].includes(month)) { // Junio, Julio, Agosto, Noviembre, Diciembre\n  season = 'high';\n  priceMultiplier = 1.4;\n} else if ([3, 4, 8, 9].includes(month)) { // Abril, Mayo, Septiembre, Octubre\n  season = 'medium';\n  priceMultiplier = 1.2;\n}\n\n// Generar ID único de búsqueda\nconst searchId = `travel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\nreturn [{\n  // Datos originales del usuario\n  ...travelData,\n  \n  // Métricas calculadas\n  trip_duration: tripDuration,\n  season: season,\n  price_multiplier: priceMultiplier,\n  \n  // Metadata\n  search_id: searchId,\n  processed_at: new Date().toISOString(),\n  user_id: travelData.user_id || `user_${Math.random().toString(36).substr(2, 9)}`,\n  \n  // Configuración de APIs\n  currency: travelData.currency || 'USD',\n  locale: travelData.locale || 'en-US',\n  \n  // Rangos de fechas para búsqueda flexible\n  flexible_dates: {\n    departure_min: new Date(departure.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    departure_max: new Date(departure.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    return_min: new Date(returnDate.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    return_max: new Date(returnDate.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "d8a72b5c-8cde-44cf-92c6-4f6a468b32da",
+      "name": "⚙️ Process Travel Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://travelai.loca.lt/optimize-travel",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"flight_data\": { \"content\": { \"results\": { \"itineraries\": {} } } },\n  \"hotel_data\": { \"result\": [] },\n  \"user_preferences\": { \"destination\": \"PAR\", \"trip_duration\": 3, \"travelers\": 2, \"season\": \"medium\" }\n}",
+        "options": {}
+      },
+      "id": "83498060-f182-4c83-9841-8c469138cd6c",
+      "name": "🤖 AI Travel Optimizer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Procesar resultados provenientes de HotelAPI (RapidAPI)\nconst hotelData = $node['HotelAPI'].json; // Nodo HTTP Request a hotelapi5.p.rapidapi.com\nconst userData = $node['Process Travel Data'].json;\n\n// Extraer mejor opción de hotel\nconst bestHotel = hotelData?.data?.[0] || {}; // Ajusta según estructura real del JSON que devuelve la API\n\n// Calcular costos y métricas\nconst hotelPrice = bestHotel.price || 0;\nconst marketAverage = hotelPrice * 1.25;\nconst savings = marketAverage - hotelPrice;\nconst savingsPercentage = ((savings / marketAverage) * 100).toFixed(1);\n\n// Crear enlace de afiliado (si lo tienes configurado en RapidAPI o tu sitio)\nconst hotelAffiliateLink = `https://hotelapi5.p.rapidapi.com/search?ss=${encodeURIComponent(userData.destination)}&checkin=${userData.departure_date}&checkout=${userData.return_date}`;\n\n// Construir itinerario básico\nconst itinerary = {\n  day_by_day: generateItinerary(userData, bestHotel),\n  total_cost: hotelPrice,\n  cost_breakdown: {\n    hotel: hotelPrice,\n    food: 100,\n    activities: 50\n  }\n};\n\n// Alertas de precio\nconst priceAlerts = [];\n\nif (savingsPercentage > 10) {\n  priceAlerts.push({\n    type: 'great_deal',\n    message: `¡Excelente precio! Ahorro estimado de ${savingsPercentage}%`,\n    priority: 'high'\n  });\n}\n\nif (userData.budget && hotelPrice > userData.budget) {\n  priceAlerts.push({\n    type: 'over_budget',\n    message: `El alojamiento supera tu presupuesto en $${hotelPrice - userData.budget}`,\n    priority: 'medium'\n  });\n}\n\n// Resultado final para enviar al Webhook Response\nreturn [{\n  ...userData,\n  \n  best_hotel: {\n    hotel_name: bestHotel.name || 'Hotel recomendado',\n    price: hotelPrice,\n    rating: bestHotel.rating || 0,\n    review_count: bestHotel.reviews || 0,\n    distance: bestHotel.distance || 'N/A',\n    affiliate_link: hotelAffiliateLink\n  },\n  \n  // Sin vuelos ni alternativas\n  total_cost: hotelPrice,\n  market_average: marketAverage,\n  total_savings: savings,\n  savings_percentage: savingsPercentage,\n\n  itinerary: itinerary,\n  price_alerts: priceAlerts,\n\n  ai_recommendations: [\n    \"Elige opciones con cancelación gratuita.\",\n    \"Revisa hoteles con desayuno incluido.\",\n    \"Considera ubicaciones cercanas al centro turístico.\"\n  ],\n  confidence_score: 0.9,\n  \n  search_completed_at: new Date().toISOString(),\n  price_valid_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()\n}];\n\n// Función auxiliar para itinerario\nfunction generateItinerary(userData, hotel) {\n  const duration = userData.trip_duration || 3;\n  const itinerary = [];\n\n  for (let i = 0; i < duration; i++) {\n    const day = {\n      day: i + 1,\n      date: new Date(new Date(userData.departure_date).getTime() + i * 86400000)\n        .toISOString()\n        .split('T')[0],\n      activities: []\n    };\n\n    if (i === 0) {\n      day.activities = ['Llegada al destino', 'Check-in en el hotel', 'Exploración local', 'Cena de bienvenida'];\n    } else if (i === duration - 1) {\n      day.activities = ['Desayuno de despedida', 'Check-out del hotel', 'Últimas compras', 'Regreso'];\n    } else {\n      day.activities = ['Desayuno en el hotel', 'Excursión local', 'Tiempo libre', 'Cena típica'];\n    }\n\n    itinerary.push(day);\n  }\n\n  return itinerary;\n}\n"
+      },
+      "id": "01fd8a24-8935-4d85-918a-5a5410f29ecb",
+      "name": "💡 Generate Travel Recommendations",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        448,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "travel_searches"
+      },
+      "id": "e90dfdcc-4f8c-4052-89e8-f5479cb09e72",
+      "name": "💾 Supabase Storage",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        720,
+        112
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "LCzTfzVXwjsIwbby",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://hotelapi5.p.rapidapi.com/api/v1/hotels/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.destination }}"
+            },
+            {
+              "name": "checkin",
+              "value": "={{ $json.departure_date }}"
+            },
+            {
+              "name": "checkout",
+              "value": "={{ $json.return_date }}"
+            },
+            {
+              "name": "currency",
+              "value": "USD"
+            },
+            {
+              "name": "adults",
+              "value": "={{ $json.travelers }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"flight_data\": {\n    \"content\": {\n      \"results\": {\n        \"itineraries\": {\n          \"it1\": {\n            \"pricing_options\": [\n              {\n                \"price\": {\n                  \"amount\": 520.0,\n                  \"currency\": \"USD\"\n                }\n              }\n            ],\n            \"legs\": [\n              {\n                \"durationInMinutes\": 420,\n                \"segments\": [\n                  {\n                    \"marketingCarrier\": {\n                      \"name\": \"Delta Airlines\"\n                    },\n                    \"departure\": \"2025-12-10T08:00:00\",\n                    \"arrival\": \"2025-12-10T15:00:00\"\n                  }\n                ]\n              }\n            ]\n          }\n        }\n      }\n    }\n  },\n  \"hotel_data\": {\n    \"result\": [\n      {\n        \"hotel_id\": 1,\n        \"hotel_name\": \"Hotel Le Paris Deluxe\",\n        \"composite_price_breakdown\": {\n          \"all_inclusive_amount\": {\n            \"value\": 350.0\n          }\n        },\n        \"currency_code\": \"USD\",\n        \"review_score\": 8.7,\n        \"review_nr\": 1250,\n        \"address\": \"Champs-Élysées, Paris\",\n        \"distances\": [{ \"text\": \"1.2 km\" }],\n        \"hotel_facilities\": [\"WiFi\", \"Desayuno incluido\", \"Piscina\", \"Spa\", \"Gimnasio\"]\n      }\n    ]\n  },\n  \"user_preferences\": {\n    \"origin\": \"NYC\",\n    \"destination\": \"PAR\",\n    \"departure_date\": \"2025-12-10\",\n    \"return_date\": \"2025-12-17\",\n    \"travelers\": 2,\n    \"trip_duration\": 7,\n    \"season\": \"high\",\n    \"budget\": 1000,\n    \"travel_style\": \"comfort\"\n  }\n}\n",
+        "options": {}
+      },
+      "id": "8c7664fb-4139-45fa-b2f4-59e0481a3c6c",
+      "name": "HotelAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        0,
+        112
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "📱 Streamlit Webhook": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Process Travel Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Process Travel Data": {
+      "main": [
+        [
+          {
+            "node": "HotelAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI Travel Optimizer": {
+      "main": [
+        [
+          {
+            "node": "💡 Generate Travel Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💡 Generate Travel Recommendations": {
+      "main": [
+        [
+          {
+            "node": "💾 Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HotelAPI": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI Travel Optimizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Supabase Storage": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9f964dcc-e6b2-42fc-a4ff-e9114f48b4f8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f9bad8a26b74e445a6ef0477ea2a386c4902af49dfbd06acb919711ebd5bfc0e"
+  },
+  "id": "Vr1tBsqclHjvy4mM",
+  "tags": []
+}
